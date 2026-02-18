@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <link
+      href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css"
+      rel="stylesheet"
+    />
+    <title>Anime Recommendation App</title>
+    <link
+      rel="stylesheet"
+      type="text/css"
+      href="{{ url_for('static', filename='main.css') }}"
+    />
+    <link
+      rel="stylesheet"
+      type="text/css"
+      href="{{ url_for('static', filename='style.css') }}"
+    />
+  </head>
+  <body>
+    <div class="page-wrap">
+      <div class="container container--animated">
+        <h1 class="page-title">
+          <i class="bx bxs-spray-can"></i>
+          Anime Recommendation
+        </h1>
+        <p class="page-subtitle">Get personalized suggestions by user or by anime.</p>
+
+        <form
+          id="recommendation_form"
+          action="{{ url_for('recommend') }}"
+          method="post"
+          class="recommend-form"
+        >
+          <input type="hidden" id="recommendation_type" name="recommendation_type" value="" required />
+
+          <fieldset class="recommend-type-fieldset">
+            <legend class="sr-only">Select recommendation type</legend>
+            <div class="recommend-tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                class="recommend-tab"
+                data-value="user_based"
+                aria-selected="false"
+              >
+                <i class="bx bxs-user"></i>
+                <span>User-based</span>
+                <small>Recommend by your MAL user ID</small>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                class="recommend-tab"
+                data-value="item_based"
+                aria-selected="false"
+              >
+                <i class="bx bxs-film"></i>
+                <span>Item-based</span>
+                <small>Recommend similar to an anime you like</small>
+              </button>
+            </div>
+          </fieldset>
+
+          <div id="user_id_section" class="form-section form-section--hidden" aria-hidden="true">
+            <label for="user_id">MAL User ID</label>
+            <div class="input-wrap">
+              <i class="bx bxs-user input-icon"></i>
+              <input
+                type="text"
+                id="user_id"
+                name="user_id"
+                placeholder="e.g. 12345"
+                autocomplete="off"
+              />
+            </div>
+          </div>
+
+          <div id="anime_name_section" class="form-section form-section--hidden" aria-hidden="true">
+            <label for="anime_name">Anime name</label>
+            <div class="autocomplete-wrap">
+              <div class="input-wrap">
+                <i class="bx bxs-search input-icon"></i>
+                <input
+                  type="text"
+                  id="anime_name"
+                  name="anime_name"
+                  placeholder="Start typing to search..."
+                  autocomplete="off"
+                  aria-autocomplete="list"
+                  aria-expanded="false"
+                  aria-controls="anime_autocomplete_list"
+                />
+              </div>
+              <ul
+                id="anime_autocomplete_list"
+                class="autocomplete-list"
+                role="listbox"
+                aria-hidden="true"
+              ></ul>
+            </div>
+          </div>
+
+          <div id="num_recommendations_section" class="form-section form-section--hidden" aria-hidden="true">
+            <label for="num_recommendations">Number of recommendations</label>
+            <div class="input-wrap input-wrap--number">
+              <input
+                type="range"
+                id="num_recommendations_range"
+                min="5"
+                max="20"
+                value="10"
+                aria-valuemin="5"
+                aria-valuemax="20"
+                aria-valuenow="10"
+              />
+              <div class="range-value-wrap">
+                <input
+                  type="number"
+                  id="num_recommendations"
+                  name="num_recommendations"
+                  min="5"
+                  max="20"
+                  value="10"
+                  class="range-value-input"
+                />
+                <span class="range-value-label">anime</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="btn-submit" id="submit_btn">
+              <span class="btn-submit-text">Get Recommendations</span>
+              <span class="btn-submit-loading" aria-hidden="true">
+                <i class="bx bx-loader-alt spin"></i>
+                Loading…
+              </span>
+            </button>
+          </div>
+        </form>
+
+        {% if error_message %}
+        <div class="error-toast" role="alert">
+          <i class="bx bx-error-circle"></i>
+          {{ error_message }}
+        </div>
+        {% endif %}
+      </div>
+
+      <div id="loading_overlay" class="loading-overlay" aria-hidden="true">
+        <div class="loading-spinner"></div>
+        <p class="loading-text">Finding recommendations…</p>
+      </div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+      (function () {
+        const form = document.getElementById("recommendation_form");
+        const hiddenType = document.getElementById("recommendation_type");
+        const tabs = document.querySelectorAll(".recommend-tab");
+        const userSection = document.getElementById("user_id_section");
+        const animeSection = document.getElementById("anime_name_section");
+        const numSection = document.getElementById("num_recommendations_section");
+        const submitBtn = document.getElementById("submit_btn");
+        const loadingOverlay = document.getElementById("loading_overlay");
+        const animeInput = document.getElementById("anime_name");
+        const autocompleteList = document.getElementById("anime_autocomplete_list");
+        const numRange = document.getElementById("num_recommendations_range");
+        const numInput = document.getElementById("num_recommendations");
+
+        let autocompleteSelectedIndex = -1;
+        let autocompleteItems = [];
+        let debounceTimer;
+
+        // ——— Tabs ———
+        function setActiveTab(value) {
+          hiddenType.value = value || "";
+          tabs.forEach((tab) => {
+            const isActive = tab.getAttribute("data-value") === value;
+            tab.classList.toggle("recommend-tab--active", isActive);
+            tab.setAttribute("aria-selected", isActive);
+          });
+
+          userSection.classList.toggle("form-section--hidden", value !== "user_based");
+          userSection.setAttribute("aria-hidden", value !== "user_based");
+          animeSection.classList.toggle("form-section--hidden", value !== "item_based");
+          animeSection.setAttribute("aria-hidden", value !== "item_based");
+          numSection.classList.toggle("form-section--hidden", !value);
+          numSection.setAttribute("aria-hidden", !value);
+        }
+
+        tabs.forEach((tab) => {
+          tab.addEventListener("click", function () {
+            setActiveTab(this.getAttribute("data-value"));
+          });
+        });
+
+        // ——— Range ↔ number sync ———
+        if (numRange && numInput) {
+          numRange.addEventListener("input", function () {
+            numInput.value = this.value;
+            numRange.setAttribute("aria-valuenow", this.value);
+          });
+          numInput.addEventListener("change", function () {
+            let v = parseInt(this.value, 10);
+            v = Math.min(20, Math.max(5, isNaN(v) ? 10 : v));
+            this.value = v;
+            numRange.value = v;
+            numRange.setAttribute("aria-valuenow", v);
+          });
+        }
+
+        // ——— Autocomplete ———
+        function showAutocomplete(items) {
+          autocompleteItems = items || [];
+          autocompleteSelectedIndex = -1;
+          autocompleteList.innerHTML = "";
+          if (autocompleteItems.length === 0) {
+            autocompleteList.classList.remove("autocomplete-list--open");
+            autocompleteList.setAttribute("aria-hidden", "true");
+            animeInput.setAttribute("aria-expanded", "false");
+            return;
+          }
+          autocompleteItems.forEach((name, i) => {
+            const li = document.createElement("li");
+            li.setAttribute("role", "option");
+            li.setAttribute("id", "anime_opt_" + i);
+            li.textContent = name;
+            li.addEventListener("click", function () {
+              animeInput.value = name;
+              closeAutocomplete();
+            });
+            autocompleteList.appendChild(li);
+          });
+          autocompleteList.classList.add("autocomplete-list--open");
+          autocompleteList.setAttribute("aria-hidden", "false");
+          animeInput.setAttribute("aria-expanded", "true");
+        }
+
+        function closeAutocomplete() {
+          autocompleteList.classList.remove("autocomplete-list--open");
+          autocompleteList.setAttribute("aria-hidden", "true");
+          animeInput.setAttribute("aria-expanded", "false");
+          autocompleteSelectedIndex = -1;
+        }
+
+        function highlightOption(index) {
+          const options = autocompleteList.querySelectorAll("[role=option]");
+          options.forEach((el, i) => el.classList.toggle("autocomplete-item--active", i === index));
+          if (options[index]) options[index].scrollIntoView({ block: "nearest" });
+        }
+
+        animeInput.addEventListener("input", function () {
+          const term = this.value.trim();
+          clearTimeout(debounceTimer);
+          if (term.length < 2) {
+            showAutocomplete([]);
+            return;
+          }
+          debounceTimer = setTimeout(function () {
+            $.ajax({
+              url: "/autocomplete",
+              data: { term: term },
+              dataType: "json",
+              success: function (data) {
+                showAutocomplete(Array.isArray(data) ? data.slice(0, 12) : []);
+              },
+            });
+          }, 200);
+        });
+
+        animeInput.addEventListener("keydown", function (e) {
+          if (!autocompleteList.classList.contains("autocomplete-list--open")) return;
+          const options = autocompleteList.querySelectorAll("[role=option]");
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            autocompleteSelectedIndex = Math.min(autocompleteSelectedIndex + 1, options.length - 1);
+            highlightOption(autocompleteSelectedIndex);
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            autocompleteSelectedIndex = Math.max(autocompleteSelectedIndex - 1, -1);
+            highlightOption(autocompleteSelectedIndex);
+          } else if (e.key === "Enter" && autocompleteSelectedIndex >= 0 && options[autocompleteSelectedIndex]) {
+            e.preventDefault();
+            animeInput.value = options[autocompleteSelectedIndex].textContent;
+            closeAutocomplete();
+          } else if (e.key === "Escape") {
+            closeAutocomplete();
+          }
+        });
+
+        animeInput.addEventListener("focus", function () {
+          if (autocompleteItems.length > 0) {
+            autocompleteList.classList.add("autocomplete-list--open");
+            autocompleteList.setAttribute("aria-hidden", "false");
+            animeInput.setAttribute("aria-expanded", "true");
+          }
+        });
+
+        document.addEventListener("click", function (e) {
+          if (!e.target.closest(".autocomplete-wrap")) closeAutocomplete();
+        });
+
+        // ——— Submit: loading state ———
+        form.addEventListener("submit", function (e) {
+          if (!hiddenType.value) {
+            e.preventDefault();
+            document.querySelector(".recommend-tabs").classList.add("recommend-tabs--shake");
+            setTimeout(function () {
+              document.querySelector(".recommend-tabs").classList.remove("recommend-tabs--shake");
+            }, 500);
+            return;
+          }
+          submitBtn.classList.add("btn-submit--loading");
+          submitBtn.disabled = true;
+          loadingOverlay.classList.add("loading-overlay--visible");
+          loadingOverlay.setAttribute("aria-hidden", "false");
+        });
+      })();
+    </script>
+  </body>
+</html>
